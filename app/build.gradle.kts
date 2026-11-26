@@ -45,5 +45,8 @@ dependencies {
     implementation("androidx.compose.material3:material3")
     implementation("androidx.compose.material:material-icons-extended")
     implementation("org.videolan.android:libvlc-all:3.6.0-eap5")
-    implementation("org.tensorflow:tensorflow-lite-task-vision:0.4.4")
+
+    // Google ML Kit (100% offline, compatible con todos los Android modernos)
+    implementation("com.google.mlkit:object-detection:17.0.2")
+    implementation("org.jetbrains.kotlinx:kotlinx-coroutines-play-services:1.7.3")
 }
