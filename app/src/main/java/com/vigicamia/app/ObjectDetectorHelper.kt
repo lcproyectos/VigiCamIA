@@ -3,8 +3,11 @@ package com.vigicamia.app
 import android.content.Context
 import android.graphics.Bitmap
 import android.graphics.RectF
-import org.tensorflow.lite.support.image.TensorImage
-import org.tensorflow.lite.task.vision.detector.ObjectDetector
+import com.google.mlkit.vision.common.InputImage
+import com.google.mlkit.vision.objects.ObjectDetection
+import com.google.mlkit.vision.objects.ObjectDetector
+import com.google.mlkit.vision.objects.defaults.ObjectDetectorOptions
+import kotlinx.coroutines.tasks.await
 
 data class DetectionResult(
     val categoryEs: String,
@@ -17,48 +20,53 @@ data class DetectionResult(
 class ObjectDetectorHelper(private val context: Context) {
     private var detector: ObjectDetector? = null
 
-    private val vehicles = setOf("car", "motorcycle", "bus", "truck", "bicycle")
-    private val animals = setOf("dog", "cat", "bird", "horse", "sheep", "cow")
-
     fun initialize(): String {
         return try {
-            val options = ObjectDetector.ObjectDetectorOptions.builder()
-                .setMaxResults(5)
-                .setScoreThreshold(0.40f)
+            val options = ObjectDetectorOptions.Builder()
+                .setDetectorMode(ObjectDetectorOptions.SINGLE_IMAGE_MODE)
+                .enableMultipleObjects()
+                .enableClassification()
                 .build()
-            detector = ObjectDetector.createFromFileAndOptions(
-                context,
-                "efficientdet_lite0.tflite",
-                options
-            )
+            detector = ObjectDetection.getClient(options)
             "OK"
         } catch (e: Exception) {
-            e.message ?: "Error cargando modelo IA"
+            e.message ?: "Error iniciando ML Kit"
         }
     }
 
-    fun detect(bitmap: Bitmap): List<DetectionResult> {
+    suspend fun detect(bitmap: Bitmap): List<DetectionResult> {
         val currentDetector = detector ?: return emptyList()
-        val tensorImage = TensorImage.fromBitmap(bitmap)
-        val results = currentDetector.detect(tensorImage)
+        return try {
+            val image = InputImage.fromBitmap(bitmap, 0)
+            val objects = currentDetector.process(image).await()
 
-        return results.mapNotNull { detection ->
-            val category = detection.categories.firstOrNull() ?: return@mapNotNull null
-            val label = category.label.lowercase()
-            val isPerson = label == "person"
-            val categoryEs = when {
-                isPerson -> "PERSONA"
-                label in vehicles -> "VEHÍCULO ($label)"
-                label in animals -> "ANIMAL ($label)"
-                else -> "OBJETO ($label)"
+            objects.map { obj ->
+                val topLabel = obj.labels.maxByOrNull { it.confidence }
+                val labelText = topLabel?.text ?: "Objeto"
+                val confidence = topLabel?.confidence ?: 0.75f
+
+                // ML Kit clasifica: Fashion good (ropa/personas), Home good, Food, Place, Plant
+                val isPerson = labelText.equals("Fashion good", ignoreCase = true) ||
+                        labelText.equals("Person", ignoreCase = true)
+
+                val categoryEs = when {
+                    isPerson -> "PERSONA / INTRUSO"
+                    labelText.equals("Home good", ignoreCase = true) -> "OBJETO"
+                    labelText.equals("Place", ignoreCase = true) -> "VEHÍCULO / ESTRUCTURA"
+                    labelText.equals("Plant", ignoreCase = true) -> "ANIMAL / PLANTA"
+                    else -> "OBJETO ($labelText)"
+                }
+
+                DetectionResult(
+                    categoryEs = categoryEs,
+                    rawLabel = labelText,
+                    score = confidence,
+                    boundingBox = RectF(obj.boundingBox),
+                    isPerson = isPerson
+                )
             }
-            DetectionResult(
-                categoryEs = categoryEs,
-                rawLabel = label,
-                score = category.score,
-                boundingBox = detection.boundingBox,
-                isPerson = isPerson
-            )
+        } catch (_: Exception) {
+            emptyList()
         }
     }
 }
