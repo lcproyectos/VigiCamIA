@@ -41,11 +41,13 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
+import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -120,6 +122,7 @@ fun VigiCamScreen() {
     var showConfigDialog by remember { mutableStateOf(false) }
 
     var showLandscapeHud by remember { mutableStateOf(true) }
+    var videoBoxSize by remember { mutableStateOf(IntSize.Zero) }
 
     var isConnected by remember { mutableStateOf(false) }
     var aiStatus by remember { mutableStateOf("Iniciando IA...") }
@@ -138,15 +141,26 @@ fun VigiCamScreen() {
     }
     val mediaPlayer = remember { MediaPlayer(libVLC) }
 
-    LaunchedEffect(isLandscape, configuration.screenWidthDp, configuration.screenHeightDp, isConnected) {
-        if (isLandscape && configuration.screenWidthDp > 0 && configuration.screenHeightDp > 0) {
-            mediaPlayer.aspectRatio = "${configuration.screenWidthDp}:${configuration.screenHeightDp}"
-            mediaPlayer.scale = 0f
-        } else {
-            mediaPlayer.aspectRatio = null
-            mediaPlayer.scale = 0f
-            showLandscapeHud = true
+    fun applyFullStretch() {
+        val w = videoBoxSize.width
+        val h = videoBoxSize.height
+        if (w > 0 && h > 0) {
+            try {
+                mediaPlayer.vlcVout.setWindowSize(w, h)
+                if (isLandscape) {
+                    mediaPlayer.aspectRatio = "$w:$h"
+                    mediaPlayer.scale = 0f
+                } else {
+                    mediaPlayer.aspectRatio = null
+                    mediaPlayer.scale = 0f
+                }
+            } catch (_: Exception) {}
         }
+    }
+
+    LaunchedEffect(videoBoxSize, isLandscape, isConnected) {
+        if (!isLandscape) showLandscapeHud = true
+        applyFullStretch()
     }
 
     val callPermissionLauncher = rememberLauncherForActivityResult(
@@ -182,6 +196,11 @@ fun VigiCamScreen() {
             }
             mediaPlayer.media = media
             media.release()
+            mediaPlayer.setEventListener { event ->
+                if (event.type == MediaPlayer.Event.Playing || event.type == MediaPlayer.Event.Vout) {
+                    applyFullStretch()
+                }
+            }
             mediaPlayer.play()
             isConnected = true
             statusText = "En vivo ($ipInput) • $aiStatus"
@@ -219,25 +238,24 @@ fun VigiCamScreen() {
                         showLandscapeHud = true
                         alertManager.triggerIntruderAlert()
                         val saved = withContext(Dispatchers.IO) {
-                            snapshotHelper.captureIntruderPhoto(bmp)
-                        }
-                        if (saved) {
-                            photosSavedCount++
-                            Toast.makeText(context, "Foto de intruso guardada en Galería", Toast.LENGTH_SHORT).show()
-                        }
-                    }
-                }
-            }
-            delay(400L)
-        }
-        if (!isConnected) {
-            detections = emptyList()
-            intruderActive = false
-        }
-    }
-
-    DisposableEffect(Unit) {
-        onDispose {
+snapshotHelper.captureIntruderPhoto(bmp)
+}
+if (saved) {
+photosSavedCount++
+Toast.makeText(context, "Foto de intruso guardada en Galería", Toast.LENGTH_SHORT).show()
+}
+}
+}
+}
+delay(400L)
+}
+if (!isConnected) {
+detections = emptyList()
+intruderActive = false
+}
+}
+DisposableEffect(Unit) {
+onDispose {
 try {
 mediaPlayer.stop()
 mediaPlayer.vlcVout.detachViews()
@@ -359,6 +377,9 @@ modifier = Modifier
 .weight(1f)
 .padding(top = if (isLandscape) 0.dp else 4.dp)
 .background(Color.Black)
+.onSizeChanged { newSize ->
+videoBoxSize = newSize
+}
 .border(
 width = if (intruderActive) 4.dp else 0.dp,
 color = if (intruderActive) Color.Red else Color.Transparent
