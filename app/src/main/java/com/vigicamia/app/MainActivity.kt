@@ -8,6 +8,7 @@ import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Bundle
 import android.view.TextureView
+import android.view.WindowManager
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -56,6 +57,8 @@ import org.videolan.libvlc.MediaPlayer
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        // Mantiene la pantalla siempre encendida mientras la app esté abierta
+        window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
         setContent {
             MaterialTheme(colorScheme = darkColorScheme()) {
                 Surface(modifier = Modifier.fillMaxSize(), color = Color(0xFF101318)) {
@@ -240,8 +243,8 @@ fun VigiCamScreen() {
                         Column {
                             Text("VigiCam IA", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Color.White)
                             Text(aiStatus, fontSize = 11.sp, color = if (aiReady) Color(0xFF81C784) else Color(0xFFFF8A65))
-                        }
-                        IconButton(onClick = { showConfigDialog = true }) {
+}
+IconButton(onClick = { showConfigDialog = true }) {
 Icon(Icons.Default.Settings, contentDescription = "Ajustes", tint = Color(0xFF64B5F6))
 }
 }
