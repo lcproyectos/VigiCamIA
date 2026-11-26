@@ -234,7 +234,7 @@ fun VigiCamScreen() {
                 Spacer(Modifier.width(4.dp))
                 Text(if (isConnected) "Parar" else "Conectar")
             }
-        }
+}
 if (recentIps.isNotEmpty() && !isConnected) {
 Row(
 modifier = Modifier
@@ -367,41 +367,3 @@ TextButton(onClick = { showConfigDialog = false }) { Text("Cancelar") }
 )
 }
 }
-
-#### 🔟 Archivo 10 (el robot compilador)
-* **Nombre exacto:** `.github/workflows/build-apk.yml`
-* **Código:**
-```yaml
-name: Compilar APK VigiCamIA
-
-on:
-  push:
-    branches: [ main ]
-  workflow_dispatch:
-
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Descargar repositorio
-        uses: actions/checkout@v4
-
-      - name: Configurar Java 17
-        uses: actions/setup-java@v4
-        with:
-          distribution: 'temurin'
-          java-version: '17'
-
-      - name: Configurar Gradle
-        uses: gradle/actions/setup-gradle@v3
-        with:
-          gradle-version: '8.5'
-
-      - name: Compilar APK Debug
-        run: gradle assembleDebug
-
-      - name: Subir APK listo para descargar
-        uses: actions/upload-artifact@v4
-        with:
-          name: VigiCamIA-S20-debug
-          path: app/build/outputs/apk/debug/app-debug.apk
