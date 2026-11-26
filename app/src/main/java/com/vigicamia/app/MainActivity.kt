@@ -6,6 +6,7 @@ import android.content.pm.PackageManager
 import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.net.Uri
+import android.os.Build
 import android.os.Bundle
 import android.view.TextureView
 import android.view.WindowManager
@@ -49,10 +50,8 @@ import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
-import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
-import kotlinx.coroutines.withContext
 import org.videolan.libvlc.LibVLC
 import org.videolan.libvlc.Media
 import org.videolan.libvlc.MediaPlayer
@@ -61,11 +60,15 @@ class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+            window.attributes.layoutInDisplayCutoutMode =
+                WindowManager.LayoutParams.LAYOUT_IN_DISPLAY_CUTOUT_MODE_SHORT_EDGES
+        }
         updateSystemBars(resources.configuration.orientation)
 
         setContent {
             MaterialTheme(colorScheme = darkColorScheme()) {
-                Surface(modifier = Modifier.fillMaxSize(), color = Color(0xFF101318)) {
+                Surface(modifier = Modifier.fillMaxSize(), color = Color.Black) {
                     VigiCamScreen()
                 }
             }
@@ -126,6 +129,17 @@ fun VigiCamScreen() {
     }
     val mediaPlayer = remember { MediaPlayer(libVLC) }
 
+    // Ajusta el video al 100% de la pantalla sin franjas negras al girar
+    LaunchedEffect(isLandscape, configuration.screenWidthDp, configuration.screenHeightDp, isConnected) {
+        if (isLandscape && configuration.screenWidthDp > 0 && configuration.screenHeightDp > 0) {
+            mediaPlayer.aspectRatio = "${configuration.screenWidthDp}:${configuration.screenHeightDp}"
+            mediaPlayer.scale = 0f
+        } else {
+            mediaPlayer.aspectRatio = null
+            mediaPlayer.scale = 0f
+        }
+    }
+
     val callPermissionLauncher = rememberLauncherForActivityResult(
         ActivityResultContracts.RequestPermission()
     ) { granted ->
@@ -140,6 +154,32 @@ fun VigiCamScreen() {
             context.startActivity(Intent(Intent.ACTION_CALL, Uri.parse("tel:+56987296485")))
         } else {
             callPermissionLauncher.launch(Manifest.permission.CALL_PHONE)
+        }
+    }
+
+    fun toggleConnection() {
+        if (!isConnected) {
+            if (ipInput.isBlank()) {
+                statusText = "Ingresa una dirección IP válida primero."
+                return
+            }
+            prefs.cameraIp = ipInput
+            recentIps = prefs.getRecentIps()
+            val url = prefs.buildStreamUrl(ipInput)
+            statusText = "Conectando a $url"
+            val media = Media(libVLC, Uri.parse(url)).apply {
+                setHWDecoderEnabled(false, false)
+                addOption(":network-caching=300")
+            }
+            mediaPlayer.media = media
+            media.release()
+            mediaPlayer.play()
+            isConnected = true
+            statusText = "En vivo ($ipInput) • $aiStatus"
+        } else {
+            mediaPlayer.stop()
+            isConnected = false
+            statusText = "Desconectado. Puedes cambiar la IP completa."
         }
     }
 
@@ -158,7 +198,7 @@ fun VigiCamScreen() {
         while (isActive && isConnected && aiReady) {
             val tv = textureViewRef
             if (tv != null && tv.isAvailable && tv.width > 0 && tv.height > 0) {
-                val bmp: Bitmap? = tv.bitmap
+                val bmp: Bitmap? = try { tv.bitmap } catch (_: Exception) { null }
                 if (bmp != null) {
                     frameWidth = bmp.width
                     frameHeight = bmp.height
@@ -181,147 +221,29 @@ fun VigiCamScreen() {
 
     DisposableEffect(Unit) {
         onDispose {
-            mediaPlayer.stop()
-            mediaPlayer.release()
-            libVLC.release()
-            alertManager.shutdown()
+            try {
+                mediaPlayer.stop()
+                mediaPlayer.vlcVout.detachViews()
+                mediaPlayer.release()
+                libVLC.release()
+                alertManager.shutdown()
+            } catch (_: Exception) {}
         }
     }
 
-    val videoBox: @Composable (Modifier) -> Unit = { boxModifier ->
-        Box(
-            modifier = boxModifier
-                .background(Color.Black)
-                .border(
-                    width = if (intruderActive) 4.dp else 0.dp,
-                    color = if (intruderActive) Color.Red else Color.Transparent
-                )
-        ) {
-            AndroidView(
-                factory = { ctx ->
-                    TextureView(ctx).also { tv ->
-                        textureViewRef = tv
-                        mediaPlayer.vlcVout.setVideoView(tv)
-                        mediaPlayer.vlcVout.attachViews()
-                    }
-                },
-                update = { tv ->
-                    if (textureViewRef != tv) {
-                        textureViewRef = tv
-                        mediaPlayer.vlcVout.detachViews()
-                        mediaPlayer.vlcVout.setVideoView(tv)
-                        mediaPlayer.vlcVout.attachViews()
-                    }
-                },
-                modifier = Modifier.fillMaxSize()
-            )
-
-            Canvas(modifier = Modifier.fillMaxSize()) {
-                val scaleX = size.width / frameWidth.toFloat()
-                val scaleY = size.height / frameHeight.toFloat()
-
-                detections.forEach { det ->
-                    val boxColor = if (det.isPerson) Color.Red else Color.Green
-                    drawRect(
-                        color = boxColor,
-                        topLeft = Offset(det.boundingBox.left * scaleX, det.boundingBox.top * scaleY),
-                        size = Size(det.boundingBox.width() * scaleX, det.boundingBox.height() * scaleY),
-                        style = Stroke(width = 7f)
-                    )
-                }
-            }
-
-            Text(
-                text = statusText,
-                color = Color.White,
-                fontSize = 11.sp,
-                modifier = Modifier
-                    .align(Alignment.TopStart)
-                    .background(Color(0x88000000))
-                    .padding(6.dp)
-            )
-        }
-    }
-
-    if (isLandscape) {
-        // Modo Pantalla Completa en horizontal
-        Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
-            videoBox(Modifier.fillMaxSize())
-if (intruderActive) {
-Card(
-colors = CardDefaults.cardColors(containerColor = Color(0xDDB71C1C)),
-modifier = Modifier.align(Alignment.TopCenter).padding(top = 12.dp)
-) {
-Row(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
-Icon(Icons.Default.Warning, contentDescription = null, tint = Color.Yellow)
-Spacer(Modifier.width(8.dp))
-Text("¡ALERTA INTRUSO DETECTADO!", color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = 16.sp)
-}
-}
-}
-// Controles flotantes discretos abajo en pantalla completa
-Row(
-modifier = Modifier
-.align(Alignment.BottomCenter)
-.fillMaxWidth()
-.background(Color(0x88000000))
-.padding(horizontal = 16.dp, vertical = 8.dp),
-horizontalArrangement = Arrangement.SpaceBetween,
-verticalAlignment = Alignment.CenterVertically
-) {
-Button(
-onClick = {
-if (!isConnected) {
-if (ipInput.isBlank()) return@Button
-prefs.cameraIp = ipInput
-val url = prefs.buildStreamUrl(ipInput)
-val media = Media(libVLC, Uri.parse(url)).apply {
-setHWDecoderEnabled(false, false)
-addOption(":network-caching=300")
-}
-mediaPlayer.media = media
-media.release()
-mediaPlayer.play()
-isConnected = true
-statusText = "En vivo ($ipInput) • $aiStatus"
-} else {
-mediaPlayer.stop()
-isConnected = false
-statusText = "Desconectado"
-}
-},
-colors = ButtonDefaults.buttonColors(
-containerColor = if (isConnected) Color(0xFFD32F2F) else Color(0xFF2E7D32)
-)
-) {
-Icon(if (isConnected) Icons.Default.Stop else Icons.Default.PlayArrow, contentDescription = null)
-Spacer(Modifier.width(4.dp))
-Text(if (isConnected) "Parar" else "Conectar")
-}
-Text(
-text = if (detections.isEmpty()) "Sin detecciones"
-else detections.joinToString { "${it.categoryEs} (${(it.score * 100).toInt()}%)" },
-color = Color.White,
-fontSize = 12.sp
-)
-Button(
-onClick = { callCarabineros() },
-colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1B5E20))
-) {
-Icon(Icons.Default.Call, contentDescription = null, tint = Color.White)
-Spacer(Modifier.width(6.dp))
-Text("CARABINEROS", color = Color.White, fontWeight = FontWeight.Bold)
-}
-}
-}
-} else {
-// Modo vertical normal
-Column(modifier = Modifier.fillMaxSize().padding(12.dp)) {
-Row(
-modifier = Modifier.fillMaxWidth(),
-horizontalArrangement = Arrangement.SpaceBetween,
-verticalAlignment = Alignment.CenterVertically
-) {
+    // Estructura única: el video NUNCA se destruye al girar, evitando colapsos
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(if (isLandscape) Color.Black else Color(0xFF101318))
+            .padding(if (isLandscape) 0.dp else 12.dp)
+    ) {
+        if (!isLandscape) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
 Column {
 Text("VigiCam IA • V380", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Color.White)
 Text(aiStatus, fontSize = 12.sp, color = if (aiReady) Color(0xFF81C784) else Color(0xFFFF8A65))
@@ -363,31 +285,7 @@ modifier = Modifier.weight(1f)
 )
 Spacer(modifier = Modifier.width(8.dp))
 Button(
-onClick = {
-if (!isConnected) {
-if (ipInput.isBlank()) {
-statusText = "Ingresa una dirección IP válida primero."
-return@Button
-}
-prefs.cameraIp = ipInput
-recentIps = prefs.getRecentIps()
-val url = prefs.buildStreamUrl(ipInput)
-statusText = "Conectando a $url"
-val media = Media(libVLC, Uri.parse(url)).apply {
-setHWDecoderEnabled(false, false)
-addOption(":network-caching=300")
-}
-mediaPlayer.media = media
-media.release()
-mediaPlayer.play()
-isConnected = true
-statusText = "En vivo ($ipInput) • $aiStatus"
-} else {
-mediaPlayer.stop()
-isConnected = false
-statusText = "Desconectado. Puedes cambiar la IP completa."
-}
-},
+onClick = { toggleConnection() },
 colors = ButtonDefaults.buttonColors(
 containerColor = if (isConnected) Color(0xFFD32F2F) else Color(0xFF2E7D32)
 ),
@@ -435,12 +333,109 @@ fontSize = 17.sp
 }
 }
 }
-videoBox(
-Modifier
+}
+// Visor de video único (ocupa 100% en horizontal)
+Box(
+modifier = Modifier
 .fillMaxWidth()
 .weight(1f)
-.padding(top = 4.dp)
+.padding(top = if (isLandscape) 0.dp else 4.dp)
+.background(Color.Black)
+.border(
+width = if (intruderActive) 4.dp else 0.dp,
+color = if (intruderActive) Color.Red else Color.Transparent
 )
+) {
+AndroidView(
+factory = { ctx ->
+TextureView(ctx).also { tv ->
+textureViewRef = tv
+mediaPlayer.vlcVout.setVideoView(tv)
+mediaPlayer.vlcVout.attachViews()
+}
+},
+modifier = Modifier.fillMaxSize()
+)
+Canvas(modifier = Modifier.fillMaxSize()) {
+val scaleX = size.width / frameWidth.toFloat()
+val scaleY = size.height / frameHeight.toFloat()
+detections.forEach { det ->
+val boxColor = if (det.isPerson) Color.Red else Color.Green
+drawRect(
+color = boxColor,
+topLeft = Offset(det.boundingBox.left * scaleX, det.boundingBox.top * scaleY),
+size = Size(det.boundingBox.width() * scaleX, det.boundingBox.height() * scaleY),
+style = Stroke(width = 7f)
+)
+}
+}
+Text(
+text = statusText,
+color = Color.White,
+fontSize = 11.sp,
+modifier = Modifier
+.align(Alignment.TopStart)
+.background(Color(0x88000000))
+.padding(6.dp)
+)
+if (isLandscape) {
+if (intruderActive) {
+Card(
+colors = CardDefaults.cardColors(containerColor = Color(0xDDB71C1C)),
+modifier = Modifier.align(Alignment.TopCenter).padding(top = 10.dp)
+) {
+Row(
+modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
+verticalAlignment = Alignment.CenterVertically
+) {
+Icon(Icons.Default.Warning, contentDescription = null, tint = Color.Yellow)
+Spacer(Modifier.width(8.dp))
+Text(
+"¡ALERTA INTRUSO DETECTADO!",
+color = Color.White,
+fontWeight = FontWeight.ExtraBold,
+fontSize = 16.sp
+)
+}
+}
+}
+Row(
+modifier = Modifier
+.align(Alignment.BottomCenter)
+.fillMaxWidth()
+.background(Color(0x77000000))
+.padding(horizontal = 16.dp, vertical = 6.dp),
+horizontalArrangement = Arrangement.SpaceBetween,
+verticalAlignment = Alignment.CenterVertically
+) {
+Button(
+onClick = { toggleConnection() },
+colors = ButtonDefaults.buttonColors(
+containerColor = if (isConnected) Color(0xFFD32F2F) else Color(0xFF2E7D32)
+)
+) {
+Icon(if (isConnected) Icons.Default.Stop else Icons.Default.PlayArrow, contentDescription = null)
+Spacer(Modifier.width(4.dp))
+Text(if (isConnected) "Parar" else "Conectar")
+}
+Text(
+text = if (detections.isEmpty()) "Sin detecciones"
+else detections.joinToString { "${it.categoryEs} (${(it.score * 100).toInt()}%)" },
+color = Color.White,
+fontSize = 12.sp
+)
+Button(
+onClick = { callCarabineros() },
+colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1B5E20))
+) {
+Icon(Icons.Default.Call, contentDescription = null, tint = Color.White)
+Spacer(Modifier.width(6.dp))
+Text("CARABINEROS", color = Color.White, fontWeight = FontWeight.Bold)
+}
+}
+}
+}
+if (!isLandscape) {
 Text(
 text = if (detections.isEmpty()) "Detecciones: Ninguna"
 else "Detectado: " + detections.joinToString { "${it.categoryEs} (${(it.score * 100).toInt()}%)" },
