@@ -46,6 +46,9 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.core.content.ContextCompat
+import androidx.core.view.WindowCompat
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
@@ -57,14 +60,33 @@ import org.videolan.libvlc.MediaPlayer
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        // Mantiene la pantalla siempre encendida mientras la app esté abierta
         window.addFlags(WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON)
+        updateSystemBars(resources.configuration.orientation)
+
         setContent {
             MaterialTheme(colorScheme = darkColorScheme()) {
                 Surface(modifier = Modifier.fillMaxSize(), color = Color(0xFF101318)) {
                     VigiCamScreen()
                 }
             }
+        }
+    }
+
+    override fun onConfigurationChanged(newConfig: Configuration) {
+        super.onConfigurationChanged(newConfig)
+        updateSystemBars(newConfig.orientation)
+    }
+
+    private fun updateSystemBars(orientation: Int) {
+        val controller = WindowCompat.getInsetsController(window, window.decorView)
+        if (orientation == Configuration.ORIENTATION_LANDSCAPE) {
+            WindowCompat.setDecorFitsSystemWindows(window, false)
+            controller.hide(WindowInsetsCompat.Type.systemBars())
+            controller.systemBarsBehavior =
+                WindowInsetsControllerCompat.BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE
+        } else {
+            WindowCompat.setDecorFitsSystemWindows(window, true)
+            controller.show(WindowInsetsCompat.Type.systemBars())
         }
     }
 }
@@ -122,12 +144,10 @@ fun VigiCamScreen() {
     }
 
     LaunchedEffect(Unit) {
-        val res = withContext(Dispatchers.IO) {
-            detectorHelper.initialize()
-        }
+        val res = detectorHelper.initialize()
         if (res == "OK") {
             aiReady = true
-            aiStatus = "IA Lista (Offline)"
+            aiStatus = "IA Lista (ML Kit Offline)"
         } else {
             aiReady = false
             aiStatus = "Error IA: $res"
@@ -142,9 +162,7 @@ fun VigiCamScreen() {
                 if (bmp != null) {
                     frameWidth = bmp.width
                     frameHeight = bmp.height
-                    val found = withContext(Dispatchers.Default) {
-                        detectorHelper.detect(bmp)
-                    }
+                    val found = detectorHelper.detect(bmp)
                     detections = found
                     val personDetected = found.any { it.isPerson }
                     intruderActive = personDetected
@@ -173,11 +191,10 @@ fun VigiCamScreen() {
     val videoBox: @Composable (Modifier) -> Unit = { boxModifier ->
         Box(
             modifier = boxModifier
-                .background(Color.Black, RoundedCornerShape(12.dp))
+                .background(Color.Black)
                 .border(
-                    width = if (intruderActive) 4.dp else 1.dp,
-                    color = if (intruderActive) Color.Red else Color.DarkGray,
-                    shape = RoundedCornerShape(12.dp)
+                    width = if (intruderActive) 4.dp else 0.dp,
+                    color = if (intruderActive) Color.Red else Color.Transparent
                 )
         ) {
             AndroidView(
@@ -220,57 +237,43 @@ fun VigiCamScreen() {
                 fontSize = 11.sp,
                 modifier = Modifier
                     .align(Alignment.TopStart)
-                    .background(Color(0x99000000))
+                    .background(Color(0x88000000))
                     .padding(6.dp)
             )
         }
     }
 
     if (isLandscape) {
-        Row(modifier = Modifier.fillMaxSize().padding(10.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-            videoBox(Modifier.weight(1.5f).fillMaxHeight())
-
-            Column(
-                modifier = Modifier.weight(1f).fillMaxHeight(),
-                verticalArrangement = Arrangement.SpaceBetween
-            ) {
-                Column {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.SpaceBetween,
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column {
-                            Text("VigiCam IA", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Color.White)
-                            Text(aiStatus, fontSize = 11.sp, color = if (aiReady) Color(0xFF81C784) else Color(0xFFFF8A65))
-}
-IconButton(onClick = { showConfigDialog = true }) {
-Icon(Icons.Default.Settings, contentDescription = "Ajustes", tint = Color(0xFF64B5F6))
+        // Modo Pantalla Completa en horizontal
+        Box(modifier = Modifier.fillMaxSize().background(Color.Black)) {
+            videoBox(Modifier.fillMaxSize())
+if (intruderActive) {
+Card(
+colors = CardDefaults.cardColors(containerColor = Color(0xDD B71C1C)),
+modifier = Modifier.align(Alignment.TopCenter).padding(top = 12.dp)
+) {
+Row(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
+Icon(Icons.Default.Warning, contentDescription = null, tint = Color.Yellow)
+Spacer(Modifier.width(8.dp))
+Text("¡ALERTA INTRUSO DETECTADO!", color = Color.White, fontWeight = FontWeight.ExtraBold, fontSize = 16.sp)
 }
 }
-OutlinedTextField(
-value = ipInput,
-onValueChange = { ipInput = it },
-enabled = !isConnected,
-label = { Text("IP completa") },
-singleLine = true,
-keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
-trailingIcon = {
-if (!isConnected && ipInput.isNotEmpty()) {
-IconButton(onClick = { ipInput = "" }) {
-Icon(Icons.Default.Clear, contentDescription = "Borrar")
 }
-}
-},
-modifier = Modifier.fillMaxWidth()
-)
-Spacer(Modifier.height(6.dp))
+// Controles flotantes discretos abajo en pantalla completa
+Row(
+modifier = Modifier
+.align(Alignment.BottomCenter)
+.fillMaxWidth()
+.background(Color(0x88000000))
+.padding(horizontal = 16.dp, vertical = 8.dp),
+horizontalArrangement = Arrangement.SpaceBetween,
+verticalAlignment = Alignment.CenterVertically
+) {
 Button(
 onClick = {
 if (!isConnected) {
 if (ipInput.isBlank()) return@Button
 prefs.cameraIp = ipInput
-recentIps = prefs.getRecentIps()
 val url = prefs.buildStreamUrl(ipInput)
 val media = Media(libVLC, Uri.parse(url)).apply {
 setHWDecoderEnabled(false, false)
@@ -289,48 +292,30 @@ statusText = "Desconectado"
 },
 colors = ButtonDefaults.buttonColors(
 containerColor = if (isConnected) Color(0xFFD32F2F) else Color(0xFF2E7D32)
-),
-modifier = Modifier.fillMaxWidth().height(46.dp)
+)
 ) {
 Icon(if (isConnected) Icons.Default.Stop else Icons.Default.PlayArrow, contentDescription = null)
 Spacer(Modifier.width(4.dp))
 Text(if (isConnected) "Parar" else "Conectar")
 }
-if (intruderActive) {
-Card(
-colors = CardDefaults.cardColors(containerColor = Color(0xFFB71C1C)),
-modifier = Modifier.fillMaxWidth().padding(top = 6.dp)
-) {
 Text(
-"⚠️ ¡ALERTA INTRUSO!",
+text = if (detections.isEmpty()) "Sin detecciones"
+else detections.joinToString { "${it.categoryEs} (${(it.score * 100).toInt()}%)" },
 color = Color.White,
-fontWeight = FontWeight.ExtraBold,
-fontSize = 14.sp,
-modifier = Modifier.padding(8.dp)
+fontSize = 12.sp
 )
-}
-}
-Text(
-text = if (detections.isEmpty()) "Detecciones: Ninguna"
-else "Detectado: " + detections.joinToString { "${it.categoryEs} (${(it.score * 100).toInt()}%)" },
-color = Color(0xFFB0BEC5),
-fontSize = 12.sp,
-modifier = Modifier.padding(top = 6.dp)
-)
-}
 Button(
 onClick = { callCarabineros() },
-colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1B5E20)),
-shape = RoundedCornerShape(10.dp),
-modifier = Modifier.fillMaxWidth().height(50.dp)
+colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1B5E20))
 ) {
 Icon(Icons.Default.Call, contentDescription = null, tint = Color.White)
 Spacer(Modifier.width(6.dp))
-Text("CARABINEROS", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+Text("CARABINEROS", color = Color.White, fontWeight = FontWeight.Bold)
 }
 }
 }
 } else {
+// Modo vertical normal
 Column(modifier = Modifier.fillMaxSize().padding(12.dp)) {
 Row(
 modifier = Modifier.fillMaxWidth(),
@@ -450,7 +435,12 @@ fontSize = 17.sp
 }
 }
 }
-videoBox(Modifier.fillMaxWidth().weight(1f).padding(top = 4.dp))
+videoBox(
+Modifier
+.fillMaxWidth()
+.weight(1f)
+.padding(top = 4.dp)
+)
 Text(
 text = if (detections.isEmpty()) "Detecciones: Ninguna"
 else "Detectado: " + detections.joinToString { "${it.categoryEs} (${(it.score * 100).toInt()}%)" },
