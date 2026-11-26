@@ -5,9 +5,6 @@ import android.graphics.Bitmap
 import android.graphics.RectF
 import org.tensorflow.lite.support.image.TensorImage
 import org.tensorflow.lite.task.vision.detector.ObjectDetector
-import java.io.File
-import java.io.FileOutputStream
-import java.net.URL
 
 data class DetectionResult(
     val categoryEs: String,
@@ -23,26 +20,20 @@ class ObjectDetectorHelper(private val context: Context) {
     private val vehicles = setOf("car", "motorcycle", "bus", "truck", "bicycle")
     private val animals = setOf("dog", "cat", "bird", "horse", "sheep", "cow")
 
-    fun initialize(): Boolean {
+    fun initialize(): String {
         return try {
-            val modelFile = File(context.filesDir, "efficientdet_lite0.tflite")
-            if (!modelFile.exists()) {
-                val url = URL("https://googleapis.com")
-                url.openStream().use { input ->
-                    FileOutputStream(modelFile).use { output ->
-                        input.copyTo(output)
-                    }
-                }
-            }
             val options = ObjectDetector.ObjectDetectorOptions.builder()
                 .setMaxResults(5)
-                .setScoreThreshold(0.52f)
+                .setScoreThreshold(0.40f)
                 .build()
-            detector = ObjectDetector.createFromFileAndOptions(modelFile, options)
-            true
+            detector = ObjectDetector.createFromFileAndOptions(
+                context,
+                "efficientdet_lite0.tflite",
+                options
+            )
+            "OK"
         } catch (e: Exception) {
-            e.printStackTrace()
-            false
+            e.message ?: "Error cargando modelo IA"
         }
     }
 
