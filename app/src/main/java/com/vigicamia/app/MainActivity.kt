@@ -10,6 +10,7 @@ import android.os.Build
 import android.os.Bundle
 import android.view.TextureView
 import android.view.WindowManager
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -52,8 +53,10 @@ import androidx.core.content.ContextCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.withContext
 import org.videolan.libvlc.LibVLC
 import org.videolan.libvlc.Media
 import org.videolan.libvlc.MediaPlayer
@@ -106,6 +109,7 @@ fun VigiCamScreen() {
     val prefs = remember { PrefsManager(context) }
     val alertManager = remember { AlertManager(context) }
     val detectorHelper = remember { ObjectDetectorHelper(context) }
+    val snapshotHelper = remember { SnapshotHelper(context) }
 
     var ipInput by remember { mutableStateOf(prefs.cameraIp) }
     var recentIps by remember { mutableStateOf(prefs.getRecentIps()) }
@@ -115,7 +119,6 @@ fun VigiCamScreen() {
     var pathInput by remember { mutableStateOf(prefs.streamPath) }
     var showConfigDialog by remember { mutableStateOf(false) }
 
-    // En horizontal permite tocar la pantalla para ocultar/mostrar botones y dejar el video 100% limpio
     var showLandscapeHud by remember { mutableStateOf(true) }
 
     var isConnected by remember { mutableStateOf(false) }
@@ -124,6 +127,7 @@ fun VigiCamScreen() {
     var statusText by remember { mutableStateOf("Listo. Escribe la IP completa y pulsa Conectar.") }
     var detections by remember { mutableStateOf<List<DetectionResult>>(emptyList()) }
     var intruderActive by remember { mutableStateOf(false) }
+    var photosSavedCount by remember { mutableIntStateOf(0) }
     var frameWidth by remember { mutableIntStateOf(1) }
     var frameHeight by remember { mutableIntStateOf(1) }
 
@@ -134,7 +138,6 @@ fun VigiCamScreen() {
     }
     val mediaPlayer = remember { MediaPlayer(libVLC) }
 
-    // Ajusta el video al 100% de la pantalla sin franjas negras al girar
     LaunchedEffect(isLandscape, configuration.screenWidthDp, configuration.screenHeightDp, isConnected) {
         if (isLandscape && configuration.screenWidthDp > 0 && configuration.screenHeightDp > 0) {
             mediaPlayer.aspectRatio = "${configuration.screenWidthDp}:${configuration.screenHeightDp}"
@@ -213,7 +216,15 @@ fun VigiCamScreen() {
                     val personDetected = found.any { it.isPerson }
                     intruderActive = personDetected
                     if (personDetected) {
+                        showLandscapeHud = true
                         alertManager.triggerIntruderAlert()
+                        val saved = withContext(Dispatchers.IO) {
+                            snapshotHelper.captureIntruderPhoto(bmp)
+                        }
+                        if (saved) {
+                            photosSavedCount++
+                            Toast.makeText(context, "Foto de intruso guardada en Galería", Toast.LENGTH_SHORT).show()
+                        }
                     }
                 }
             }
@@ -227,20 +238,18 @@ fun VigiCamScreen() {
 
     DisposableEffect(Unit) {
         onDispose {
-            try {
-                mediaPlayer.stop()
-                mediaPlayer.vlcVout.detachViews()
-                mediaPlayer.release()
-                libVLC.release()
-                alertManager.shutdown()
-            } catch (_: Exception) {}
-        }
-    }
-
-    // Estructura única: el video NUNCA se destruye al girar, evitando colapsos
-    Column(
-        modifier = Modifier
-            .fillMaxSize()
+try {
+mediaPlayer.stop()
+mediaPlayer.vlcVout.detachViews()
+mediaPlayer.release()
+libVLC.release()
+alertManager.shutdown()
+} catch (_: Exception) {}
+}
+}
+Column(
+modifier = Modifier
+.fillMaxSize()
 .background(if (isLandscape) Color.Black else Color(0xFF101318))
 .padding(if (isLandscape) 0.dp else 12.dp)
 ) {
@@ -252,7 +261,11 @@ verticalAlignment = Alignment.CenterVertically
 ) {
 Column {
 Text("VigiCam IA • V380", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Color.White)
-Text(aiStatus, fontSize = 12.sp, color = if (aiReady) Color(0xFF81C784) else Color(0xFFFF8A65))
+Text(
+text = if (photosSavedCount > 0) "$aiStatus • Fotos guardadas: $photosSavedCount" else aiStatus,
+fontSize = 12.sp,
+color = if (aiReady) Color(0xFF81C784) else Color(0xFFFF8A65)
+)
 }
 IconButton(onClick = { showConfigDialog = true }) {
 Icon(Icons.Default.Settings, contentDescription = "Ajustes RTSP", tint = Color(0xFF64B5F6))
@@ -340,7 +353,6 @@ fontSize = 17.sp
 }
 }
 }
-// Visor de video único (ocupa 100% en horizontal; tócalo para ocultar/mostrar botones)
 Box(
 modifier = Modifier
 .fillMaxWidth()
@@ -383,7 +395,7 @@ style = Stroke(width = 7f)
 }
 if (!isLandscape || showLandscapeHud) {
 Text(
-text = if (isLandscape) "$statusText (Toca pantalla para ocultar botones)" else statusText,
+text = if (isLandscape) "$statusText • Fotos: $photosSavedCount" else statusText,
 color = Color.White,
 fontSize = 11.sp,
 modifier = Modifier
@@ -447,6 +459,18 @@ Icon(Icons.Default.Call, contentDescription = null, tint = Color.White)
 Spacer(Modifier.width(6.dp))
 Text("CARABINEROS", color = Color.White, fontWeight = FontWeight.Bold)
 }
+}
+} else {
+FloatingActionButton(
+onClick = { callCarabineros() },
+containerColor = Color(0xCC1B5E20),
+contentColor = Color.White,
+modifier = Modifier
+.align(Alignment.BottomEnd)
+.padding(14.dp)
+.size(48.dp)
+) {
+Icon(Icons.Default.Call, contentDescription = "Llamar a Carabineros")
 }
 }
 }
