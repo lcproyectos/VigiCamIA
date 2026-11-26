@@ -17,7 +17,9 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.Canvas
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -113,6 +115,9 @@ fun VigiCamScreen() {
     var pathInput by remember { mutableStateOf(prefs.streamPath) }
     var showConfigDialog by remember { mutableStateOf(false) }
 
+    // En horizontal permite tocar la pantalla para ocultar/mostrar botones y dejar el video 100% limpio
+    var showLandscapeHud by remember { mutableStateOf(true) }
+
     var isConnected by remember { mutableStateOf(false) }
     var aiStatus by remember { mutableStateOf("Iniciando IA...") }
     var aiReady by remember { mutableStateOf(false) }
@@ -137,6 +142,7 @@ fun VigiCamScreen() {
         } else {
             mediaPlayer.aspectRatio = null
             mediaPlayer.scale = 0f
+            showLandscapeHud = true
         }
     }
 
@@ -235,15 +241,15 @@ fun VigiCamScreen() {
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .background(if (isLandscape) Color.Black else Color(0xFF101318))
-            .padding(if (isLandscape) 0.dp else 12.dp)
-    ) {
-        if (!isLandscape) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
+.background(if (isLandscape) Color.Black else Color(0xFF101318))
+.padding(if (isLandscape) 0.dp else 12.dp)
+) {
+if (!isLandscape) {
+Row(
+modifier = Modifier.fillMaxWidth(),
+horizontalArrangement = Arrangement.SpaceBetween,
+verticalAlignment = Alignment.CenterVertically
+) {
 Column {
 Text("VigiCam IA • V380", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Color.White)
 Text(aiStatus, fontSize = 12.sp, color = if (aiReady) Color(0xFF81C784) else Color(0xFFFF8A65))
@@ -334,7 +340,7 @@ fontSize = 17.sp
 }
 }
 }
-// Visor de video único (ocupa 100% en horizontal)
+// Visor de video único (ocupa 100% en horizontal; tócalo para ocultar/mostrar botones)
 Box(
 modifier = Modifier
 .fillMaxWidth()
@@ -345,6 +351,12 @@ modifier = Modifier
 width = if (intruderActive) 4.dp else 0.dp,
 color = if (intruderActive) Color.Red else Color.Transparent
 )
+.clickable(
+interactionSource = remember { MutableInteractionSource() },
+indication = null
+) {
+if (isLandscape) showLandscapeHud = !showLandscapeHud
+}
 ) {
 AndroidView(
 factory = { ctx ->
@@ -369,8 +381,9 @@ style = Stroke(width = 7f)
 )
 }
 }
+if (!isLandscape || showLandscapeHud) {
 Text(
-text = statusText,
+text = if (isLandscape) "$statusText (Toca pantalla para ocultar botones)" else statusText,
 color = Color.White,
 fontSize = 11.sp,
 modifier = Modifier
@@ -378,6 +391,7 @@ modifier = Modifier
 .background(Color(0x88000000))
 .padding(6.dp)
 )
+}
 if (isLandscape) {
 if (intruderActive) {
 Card(
@@ -399,11 +413,12 @@ fontSize = 16.sp
 }
 }
 }
+if (showLandscapeHud) {
 Row(
 modifier = Modifier
 .align(Alignment.BottomCenter)
 .fillMaxWidth()
-.background(Color(0x77000000))
+.background(Color(0x88000000))
 .padding(horizontal = 16.dp, vertical = 6.dp),
 horizontalArrangement = Arrangement.SpaceBetween,
 verticalAlignment = Alignment.CenterVertically
@@ -431,6 +446,7 @@ colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1B5E20))
 Icon(Icons.Default.Call, contentDescription = null, tint = Color.White)
 Spacer(Modifier.width(6.dp))
 Text("CARABINEROS", color = Color.White, fontWeight = FontWeight.Bold)
+}
 }
 }
 }
