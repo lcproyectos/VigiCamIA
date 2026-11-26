@@ -3,6 +3,7 @@ package com.vigicamia.app
 import android.Manifest
 import android.content.Intent
 import android.content.pm.PackageManager
+import android.content.res.Configuration
 import android.graphics.Bitmap
 import android.net.Uri
 import android.os.Bundle
@@ -36,6 +37,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.platform.LocalClipboardManager
+import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
@@ -68,6 +70,8 @@ class MainActivity : ComponentActivity() {
 @Composable
 fun VigiCamScreen() {
     val context = LocalContext.current
+    val configuration = LocalConfiguration.current
+    val isLandscape = configuration.orientation == Configuration.ORIENTATION_LANDSCAPE
     val clipboardManager = LocalClipboardManager.current
     val prefs = remember { PrefsManager(context) }
     val alertManager = remember { AlertManager(context) }
@@ -82,6 +86,7 @@ fun VigiCamScreen() {
     var showConfigDialog by remember { mutableStateOf(false) }
 
     var isConnected by remember { mutableStateOf(false) }
+    var aiStatus by remember { mutableStateOf("Iniciando IA...") }
     var aiReady by remember { mutableStateOf(false) }
     var statusText by remember { mutableStateOf("Listo. Escribe la IP completa y pulsa Conectar.") }
     var detections by remember { mutableStateOf<List<DetectionResult>>(emptyList()) }
@@ -114,8 +119,15 @@ fun VigiCamScreen() {
     }
 
     LaunchedEffect(Unit) {
-        withContext(Dispatchers.IO) {
-            aiReady = detectorHelper.initialize()
+        val res = withContext(Dispatchers.IO) {
+            detectorHelper.initialize()
+        }
+        if (res == "OK") {
+            aiReady = true
+            aiStatus = "IA Lista (Offline)"
+        } else {
+            aiReady = false
+            aiStatus = "Error IA: $res"
         }
     }
 
@@ -138,7 +150,7 @@ fun VigiCamScreen() {
                     }
                 }
             }
-            delay(450L)
+            delay(400L)
         }
         if (!isConnected) {
             detections = emptyList()
@@ -155,85 +167,248 @@ fun VigiCamScreen() {
         }
     }
 
-    Column(modifier = Modifier.fillMaxSize().padding(12.dp)) {
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.CenterVertically
+    val videoBox: @Composable (Modifier) -> Unit = { boxModifier ->
+        Box(
+            modifier = boxModifier
+                .background(Color.Black, RoundedCornerShape(12.dp))
+                .border(
+                    width = if (intruderActive) 4.dp else 1.dp,
+                    color = if (intruderActive) Color.Red else Color.DarkGray,
+                    shape = RoundedCornerShape(12.dp)
+                )
         ) {
-            Text("VigiCam IA • V380", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Color.White)
-            IconButton(onClick = { showConfigDialog = true }) {
-                Icon(Icons.Default.Settings, contentDescription = "Ajustes RTSP", tint = Color(0xFF64B5F6))
-            }
-        }
-
-        Row(
-            modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            OutlinedTextField(
-                value = ipInput,
-                onValueChange = { ipInput = it },
-                enabled = !isConnected,
-                label = { Text("IP completa o URL") },
-                placeholder = { Text("Ej: 192.168.1.50") },
-                singleLine = true,
-                keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
-                trailingIcon = {
-                    if (!isConnected) {
-                        if (ipInput.isNotEmpty()) {
-                            IconButton(onClick = { ipInput = "" }) {
-                                Icon(Icons.Default.Clear, contentDescription = "Borrar IP completa")
-                            }
-                        } else {
-                            IconButton(onClick = {
-                                clipboardManager.getText()?.text?.let { pasted ->
-                                    ipInput = pasted.trim()
-                                }
-                            }) {
-                                Icon(Icons.Default.ContentPaste, contentDescription = "Pegar IP")
-                            }
-                        }
+            AndroidView(
+                factory = { ctx ->
+                    TextureView(ctx).also { tv ->
+                        textureViewRef = tv
+                        mediaPlayer.vlcVout.setVideoView(tv)
+                        mediaPlayer.vlcVout.attachViews()
                     }
                 },
-                modifier = Modifier.weight(1f)
+                update = { tv ->
+                    if (textureViewRef != tv) {
+                        textureViewRef = tv
+                        mediaPlayer.vlcVout.detachViews()
+                        mediaPlayer.vlcVout.setVideoView(tv)
+                        mediaPlayer.vlcVout.attachViews()
+                    }
+                },
+                modifier = Modifier.fillMaxSize()
             )
-            Spacer(modifier = Modifier.width(8.dp))
-            Button(
-                onClick = {
-                    if (!isConnected) {
-                        if (ipInput.isBlank()) {
-                            statusText = "Ingresa una dirección IP válida primero."
-                            return@Button
-                        }
-                        prefs.cameraIp = ipInput
-                        recentIps = prefs.getRecentIps()
-                        val url = prefs.buildStreamUrl(ipInput)
-                        statusText = "Conectando a $url"
-                        val media = Media(libVLC, Uri.parse(url)).apply {
-                            setHWDecoderEnabled(true, false)
-                            addOption(":network-caching=300")
-                        }
-                        mediaPlayer.media = media
-                        media.release()
-                        mediaPlayer.play()
-                        isConnected = true
-                        statusText = if (aiReady) "En vivo ($ipInput) • IA Activa" else "En vivo • Cargando IA..."
-                    } else {
-                        mediaPlayer.stop()
-                        isConnected = false
-                        statusText = "Desconectado. Puedes cambiar la IP completa."
-                    }
-                },
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = if (isConnected) Color(0xFFD32F2F) else Color(0xFF2E7D32)
-                ),
-                modifier = Modifier.height(56.dp)
-            ) {
-                Icon(if (isConnected) Icons.Default.Stop else Icons.Default.PlayArrow, contentDescription = null)
-                Spacer(Modifier.width(4.dp))
-                Text(if (isConnected) "Parar" else "Conectar")
+
+            Canvas(modifier = Modifier.fillMaxSize()) {
+                val scaleX = size.width / frameWidth.toFloat()
+                val scaleY = size.height / frameHeight.toFloat()
+
+                detections.forEach { det ->
+                    val boxColor = if (det.isPerson) Color.Red else Color.Green
+                    drawRect(
+                        color = boxColor,
+                        topLeft = Offset(det.boundingBox.left * scaleX, det.boundingBox.top * scaleY),
+                        size = Size(det.boundingBox.width() * scaleX, det.boundingBox.height() * scaleY),
+                        style = Stroke(width = 7f)
+                    )
+                }
             }
+
+            Text(
+                text = statusText,
+                color = Color.White,
+                fontSize = 11.sp,
+                modifier = Modifier
+                    .align(Alignment.TopStart)
+                    .background(Color(0x99000000))
+                    .padding(6.dp)
+            )
+        }
+    }
+
+    if (isLandscape) {
+        Row(modifier = Modifier.fillMaxSize().padding(10.dp), horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+            videoBox(Modifier.weight(1.5f).fillMaxHeight())
+
+            Column(
+                modifier = Modifier.weight(1f).fillMaxHeight(),
+                verticalArrangement = Arrangement.SpaceBetween
+            ) {
+                Column {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Column {
+                            Text("VigiCam IA", fontSize = 18.sp, fontWeight = FontWeight.Bold, color = Color.White)
+                            Text(aiStatus, fontSize = 11.sp, color = if (aiReady) Color(0xFF81C784) else Color(0xFFFF8A65))
+                        }
+                        IconButton(onClick = { showConfigDialog = true }) {
+Icon(Icons.Default.Settings, contentDescription = "Ajustes", tint = Color(0xFF64B5F6))
+}
+}
+OutlinedTextField(
+value = ipInput,
+onValueChange = { ipInput = it },
+enabled = !isConnected,
+label = { Text("IP completa") },
+singleLine = true,
+keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+trailingIcon = {
+if (!isConnected && ipInput.isNotEmpty()) {
+IconButton(onClick = { ipInput = "" }) {
+Icon(Icons.Default.Clear, contentDescription = "Borrar")
+}
+}
+},
+modifier = Modifier.fillMaxWidth()
+)
+Spacer(Modifier.height(6.dp))
+Button(
+onClick = {
+if (!isConnected) {
+if (ipInput.isBlank()) return@Button
+prefs.cameraIp = ipInput
+recentIps = prefs.getRecentIps()
+val url = prefs.buildStreamUrl(ipInput)
+val media = Media(libVLC, Uri.parse(url)).apply {
+setHWDecoderEnabled(false, false)
+addOption(":network-caching=300")
+}
+mediaPlayer.media = media
+media.release()
+mediaPlayer.play()
+isConnected = true
+statusText = "En vivo ($ipInput) • $aiStatus"
+} else {
+mediaPlayer.stop()
+isConnected = false
+statusText = "Desconectado"
+}
+},
+colors = ButtonDefaults.buttonColors(
+containerColor = if (isConnected) Color(0xFFD32F2F) else Color(0xFF2E7D32)
+),
+modifier = Modifier.fillMaxWidth().height(46.dp)
+) {
+Icon(if (isConnected) Icons.Default.Stop else Icons.Default.PlayArrow, contentDescription = null)
+Spacer(Modifier.width(4.dp))
+Text(if (isConnected) "Parar" else "Conectar")
+}
+if (intruderActive) {
+Card(
+colors = CardDefaults.cardColors(containerColor = Color(0xFFB71C1C)),
+modifier = Modifier.fillMaxWidth().padding(top = 6.dp)
+) {
+Text(
+"⚠️ ¡ALERTA INTRUSO!",
+color = Color.White,
+fontWeight = FontWeight.ExtraBold,
+fontSize = 14.sp,
+modifier = Modifier.padding(8.dp)
+)
+}
+}
+Text(
+text = if (detections.isEmpty()) "Detecciones: Ninguna"
+else "Detectado: " + detections.joinToString { "${it.categoryEs} (${(it.score * 100).toInt()}%)" },
+color = Color(0xFFB0BEC5),
+fontSize = 12.sp,
+modifier = Modifier.padding(top = 6.dp)
+)
+}
+Button(
+onClick = { callCarabineros() },
+colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF1B5E20)),
+shape = RoundedCornerShape(10.dp),
+modifier = Modifier.fillMaxWidth().height(50.dp)
+) {
+Icon(Icons.Default.Call, contentDescription = null, tint = Color.White)
+Spacer(Modifier.width(6.dp))
+Text("CARABINEROS", color = Color.White, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+}
+}
+}
+} else {
+Column(modifier = Modifier.fillMaxSize().padding(12.dp)) {
+Row(
+modifier = Modifier.fillMaxWidth(),
+horizontalArrangement = Arrangement.SpaceBetween,
+verticalAlignment = Alignment.CenterVertically
+) {
+Column {
+Text("VigiCam IA • V380", fontSize = 20.sp, fontWeight = FontWeight.Bold, color = Color.White)
+Text(aiStatus, fontSize = 12.sp, color = if (aiReady) Color(0xFF81C784) else Color(0xFFFF8A65))
+}
+IconButton(onClick = { showConfigDialog = true }) {
+Icon(Icons.Default.Settings, contentDescription = "Ajustes RTSP", tint = Color(0xFF64B5F6))
+}
+}
+Row(
+modifier = Modifier.fillMaxWidth().padding(top = 4.dp),
+verticalAlignment = Alignment.CenterVertically
+) {
+OutlinedTextField(
+value = ipInput,
+onValueChange = { ipInput = it },
+enabled = !isConnected,
+label = { Text("IP completa o URL") },
+placeholder = { Text("Ej: 192.168.1.50") },
+singleLine = true,
+keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Uri),
+trailingIcon = {
+if (!isConnected) {
+if (ipInput.isNotEmpty()) {
+IconButton(onClick = { ipInput = "" }) {
+Icon(Icons.Default.Clear, contentDescription = "Borrar IP completa")
+}
+} else {
+IconButton(onClick = {
+clipboardManager.getText()?.text?.let { pasted ->
+ipInput = pasted.trim()
+}
+}) {
+Icon(Icons.Default.ContentPaste, contentDescription = "Pegar IP")
+}
+}
+}
+},
+modifier = Modifier.weight(1f)
+)
+Spacer(modifier = Modifier.width(8.dp))
+Button(
+onClick = {
+if (!isConnected) {
+if (ipInput.isBlank()) {
+statusText = "Ingresa una dirección IP válida primero."
+return@Button
+}
+prefs.cameraIp = ipInput
+recentIps = prefs.getRecentIps()
+val url = prefs.buildStreamUrl(ipInput)
+statusText = "Conectando a $url"
+val media = Media(libVLC, Uri.parse(url)).apply {
+setHWDecoderEnabled(false, false)
+addOption(":network-caching=300")
+}
+mediaPlayer.media = media
+media.release()
+mediaPlayer.play()
+isConnected = true
+statusText = "En vivo ($ipInput) • $aiStatus"
+} else {
+mediaPlayer.stop()
+isConnected = false
+statusText = "Desconectado. Puedes cambiar la IP completa."
+}
+},
+colors = ButtonDefaults.buttonColors(
+containerColor = if (isConnected) Color(0xFFD32F2F) else Color(0xFF2E7D32)
+),
+modifier = Modifier.height(56.dp)
+) {
+Icon(if (isConnected) Icons.Default.Stop else Icons.Default.PlayArrow, contentDescription = null)
+Spacer(Modifier.width(4.dp))
+Text(if (isConnected) "Parar" else "Conectar")
+}
 }
 if (recentIps.isNotEmpty() && !isConnected) {
 Row(
@@ -272,51 +447,7 @@ fontSize = 17.sp
 }
 }
 }
-Box(
-modifier = Modifier
-.fillMaxWidth()
-.weight(1f)
-.padding(top = 4.dp)
-.background(Color.Black, RoundedCornerShape(12.dp))
-.border(
-width = if (intruderActive) 4.dp else 1.dp,
-color = if (intruderActive) Color.Red else Color.DarkGray,
-shape = RoundedCornerShape(12.dp)
-)
-) {
-AndroidView(
-factory = { ctx ->
-TextureView(ctx).also { tv ->
-textureViewRef = tv
-mediaPlayer.vlcVout.setVideoView(tv)
-mediaPlayer.vlcVout.attachViews()
-}
-},
-modifier = Modifier.fillMaxSize()
-)
-Canvas(modifier = Modifier.fillMaxSize()) {
-val scaleX = size.width / frameWidth.toFloat()
-val scaleY = size.height / frameHeight.toFloat()
-detections.forEach { det ->
-val boxColor = if (det.isPerson) Color.Red else Color.Cyan
-drawRect(
-color = boxColor,
-topLeft = Offset(det.boundingBox.left * scaleX, det.boundingBox.top * scaleY),
-size = Size(det.boundingBox.width() * scaleX, det.boundingBox.height() * scaleY),
-style = Stroke(width = 6f)
-)
-}
-}
-Text(
-text = statusText,
-color = Color.White,
-fontSize = 11.sp,
-modifier = Modifier
-.align(Alignment.TopStart)
-.background(Color(0x99000000))
-.padding(6.dp)
-)
-}
+videoBox(Modifier.fillMaxWidth().weight(1f).padding(top = 4.dp))
 Text(
 text = if (detections.isEmpty()) "Detecciones: Ninguna"
 else "Detectado: " + detections.joinToString { "${it.categoryEs} (${(it.score * 100).toInt()}%)" },
@@ -338,6 +469,7 @@ color = Color.White,
 fontWeight = FontWeight.Bold,
 fontSize = 14.sp
 )
+}
 }
 }
 if (showConfigDialog) {
