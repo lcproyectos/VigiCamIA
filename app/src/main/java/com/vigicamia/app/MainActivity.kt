@@ -249,7 +249,7 @@ fun VigiCamScreen() {
             videoBox(Modifier.fillMaxSize())
 if (intruderActive) {
 Card(
-colors = CardDefaults.cardColors(containerColor = Color(0xDD B71C1C)),
+colors = CardDefaults.cardColors(containerColor = Color(0xDDB71C1C)),
 modifier = Modifier.align(Alignment.TopCenter).padding(top = 12.dp)
 ) {
 Row(modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp), verticalAlignment = Alignment.CenterVertically) {
